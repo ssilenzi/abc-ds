@@ -1,322 +1,354 @@
 % Copyright © 2023 Martin Schonger
-% Copyright © 2025 Simone Silenzi
 % This software is licensed under the GPLv3.
+
+
 function [f_fh, V_fh, dVdx_fh, B_fh, dBdx_fh, debug_output, fc, Vc, Bc] = fvb(rd, restrict_to_convex, xi, initial_set, unsafe_set, options)
-% Solve for a polynomial dynamical system f, Lyapunov function V, and barrier B.
-% SISBMI (YALMIP+MOSEK) replaces BMI/PENBMI when restrict_to_convex == 1.
+% Run the main optimization problem to compute a polynomial dynamical system f, a polynomial
+%   Lyapunov function V, and a polynomial Barrier certificate B.
 %
-% Inputs:
-%   rd: reference data with fields M (#states), T (#samples), Data([x; xdot])
-%   restrict_to_convex: 0 => convex init with fixed V = xi'*xi, 1 => SISBMI alternating
-%   xi: sdpvar column vector of states (size Mx1)
-%   initial_set, unsafe_set: cell arrays of polynomials >= 0 (can be empty)
-%   options: struct from fvbsettings (expects options.sdpoptions for YALMIP)
+% :param rd: RefData object encapsulating the reference trajectories.
+% :param restrict_to_convex: Whether to solve the full optimization problem or a convex variant.
+%   0: Solve easier convex problem with fixed Lyapunov function.
+%   1: Solve full problem but initialize with solution of easier problem.
+% :param xi: sdpvar corresponding to the state space.
+% :param initial_set: Cell array of sdpvar expressions of polynomials (which are taken as >= 0) that
+%   define a semi-algebraic set representation of the initial set.
+% :param unsafe_set: Cell array of sdpvar expressions of polynomials (which are taken as >= 0) that
+%   define a semi-algebraic set representation of the unsafe set.
+% :param options: Options struct to configure this function's behavior, see :func:`fvbsettings` for
+%   a subset of supported options.
+% :returns: [f_fh, V_fh, dVdx_fh, B_fh, dBdx_fh, debug_output, fc, Vc, Bc], where the individual
+%   parts elements mean the following:
+%   f_fh: Function handle to the dynamical system f.
+%   V_fh: Function handle to the Lyapunov function V.
+%   dVdx_fh: Function handle to the Jacobian of V.
+%   B_fh: Function handle to the Barrier certificate B.
+%   dBdx_fh: Function handle to the Jacobian of B.
+%   debug_output: Struct containing function-internal data as well as result data, such as solver output and MSE.
+%   fc: Polynomial coefficients of f.
+%   Vc: Polynomial coefficients of V.
+%   Bc: Polynomial coefficients of B.
+
+
 %
-% Outputs: function handles for f, V, dVdx, B, dBdx and coefficient vectors.
+% assumption: attractor is at the origin
 
 epsilon = options.epsilon;
+
 debug_output = struct;
 
-% Dimensions
-M = rd.M;
-T = rd.T;
 
-%% Decision variables for f
+% Reference trajectories
+M = rd.M; % # states
+T = rd.T; % time/sample index (all demonstrations concatenated)
+
+
+%% Define variables
 deg_f = options.deg_f;
-f = []; fc_var = [];
+f = [];
+fc_var = [];
 for m = 1:M
-    [f_m, fc_m] = polynomial(xi, deg_f, 1);
-    f      = [f; f_m];
-    fc_var = [fc_var; fc_m];
+    [f_tmp, fc_var_tmp, f_monomials] = polynomial(xi, deg_f, 1);
+    f = [f; f_tmp];
+    fc_var = [fc_var; fc_var_tmp];
 end
+debug_output.f_monomials = f_monomials;
 
-% Monomial basis (for warm-start plumbing used elsewhere)
-try
-    debug_output.f_monomials = monolist(xi, deg_f);
-catch
-    debug_output.f_monomials = [];
-end
-
-%% Lyapunov V
+% Lyapunov function
 if restrict_to_convex == 0
-    V = xi' * xi;               % fixed quadratic for convex warm-start
-    [Vc_var, ~] = coefficients(V, xi); % keep variable in scope
-else
-    [V, Vc_var] = polynomial(xi, options.deg_V, 1);
+    V = xi' * xi;
+    [Vc_var, V_monomials] = coefficients(V, xi);
+elseif restrict_to_convex == 1
+    deg_V = options.deg_V;
+    [V, Vc_var, V_monomials] = polynomial(xi, deg_V, 1);
 end
+debug_output.V_monomials = V_monomials;
 dVdx = jacobian(V, xi)';
 
-%% Barrier B
-[B, Bc_var] = polynomial(xi, options.deg_B);
+% Barrier certificate
+deg_B = options.deg_B;
+[B, Bc_var, B_monomials] = polynomial(xi, deg_B);
+debug_output.B_monomials = B_monomials;
 dBdx = jacobian(B, xi)';
 
-%% Common fitting pieces
+
+% init sdpvars from options struct
+if isfield(options, 'unmatched')
+    if isfield(options.unmatched, 'fc_init')
+        assert(isfield(options.unmatched, 'fc_init_monomials'), 'options.unmatched.fc_init_monomials is required when options.unmatched.fc_init is set');
+        assert(isfield(options.unmatched, 'fc_init_sdpvar'), 'options.unmatched.fc_init_sdpvar is required when options.unmatched.fc_init is set');
+
+        fc_init_tmp = zeros(length(f_monomials), M);
+        % Assign the computed coefficient values to the matching coefficients of the higher-deg polynomial
+        fc_init_reshaped = reshape(options.unmatched.fc_init, length(options.unmatched.fc_init)/M, M);
+        fc_init_monomials_replaced = replace(options.unmatched.fc_init_monomials, options.unmatched.fc_init_sdpvar, xi);
+        [idx_from, idx_to] = match_monomials(sdisplay(fc_init_monomials_replaced), sdisplay(f_monomials));
+        for m = 1:M
+            fc_init_tmp(idx_to, m) = fc_init_reshaped(idx_from, m);
+        end
+        assign(fc_var, fc_init_tmp(:));
+    end
+    if isfield(options.unmatched, 'Vc_init')
+        assert(isfield(options.unmatched, 'Vc_init_monomials'), 'options.unmatched.Vc_init_monomials is required when options.unmatched.Vc_init is set');
+        assert(isfield(options.unmatched, 'Vc_init_sdpvar'), 'options.unmatched.Vc_init_sdpvar is required when options.unmatched.Vc_init is set');
+
+        Vc_init_tmp = zeros(size(Vc_var));
+        % Assign the computed coefficient values to the matching coefficients of the higher-deg polynomial
+        Vc_init_monomials_replaced = replace(options.unmatched.Vc_init_monomials, options.unmatched.Vc_init_sdpvar, xi);
+        [idx_from, idx_to] = match_monomials(sdisplay(Vc_init_monomials_replaced), sdisplay(V_monomials));
+        Vc_init_tmp(idx_to) = options.unmatched.Vc_init(idx_from);
+        assign(Vc_var, Vc_init_tmp);
+    end
+    if isfield(options.unmatched, 'Bc_init')
+        assert(isfield(options.unmatched, 'Bc_init_monomials'), 'options.unmatched.Bc_init_monomials is required when options.unmatched.Bc_init is set');
+        assert(isfield(options.unmatched, 'Bc_init_sdpvar'), 'options.unmatched.Bc_init_sdpvar is required when options.unmatched.Bc_init is set');
+
+        Bc_init_tmp = zeros(size(Bc_var));
+        % Assign the computed coefficient values to the matching coefficients of the higher-deg polynomial
+        Bc_init_monomials_replaced = replace(options.unmatched.Bc_init_monomials, options.unmatched.Bc_init_sdpvar, xi);
+        [idx_from, idx_to] = match_monomials(sdisplay(Bc_init_monomials_replaced), sdisplay(B_monomials));
+        Bc_init_tmp(idx_to) = options.unmatched.Bc_init(idx_from);
+        assign(Bc_var, Bc_init_tmp);
+    end
+end
+
+
+%% Objective
 xi_dot = sdpvar(M, T, 'full');
 for t = 1:T
     xi_dot(:, t) = replace(f, xi, rd.Data(1:M, t));
 end
 xi_dot_error = xi_dot - rd.Data(M+1:end, :);
-mse = sum(sum(xi_dot_error.^2)) / (2 * T);
-Objective_fit = mse;
 
-deg_B_slack = options.deg_B_slack; % still used for some slack polynomials
+mse = sum(sum(xi_dot_error.^2)) / (2 * T);
+Objective = mse;
+
+
+%% Constraints
+Constraints = [];
 epxi = epsilon * sum(xi.^2, 1);
 
-% Normalize empty sets
-if nargin < 4 || isempty(initial_set), initial_set = {}; end
-if nargin < 5 || isempty(unsafe_set),  unsafe_set  = {}; end
-
-%% Domain polynomial gX >= 0 (for S-procedure multipliers)
-% Use provided domain if present; otherwise build a ball covering the data.
-domain_set = {};
-if isfield(options,'unmatched') && isfield(options.unmatched,'domain_set') && ~isempty(options.unmatched.domain_set)
-    % Expect a cell array of polynomials g_i(x) >= 0
-    domain_set = options.unmatched.domain_set;
-else
-    X = rd.Data(1:M, :);
-    R2 = 1.1 * max(sum(X.^2, 1));   % margin
-    gX = R2 - sum(xi.^2);           % ball: ||x||^2 <= R^2  <=> gX >= 0
-    domain_set = {gX};
-end
-debug_output.domain_set = domain_set;
-
-% Helper: degree-balanced domain multipliers for SOS(poly - sum mu_i*g_i)
-    function [ConOut, mults] = add_domain_sos_auto(ConIn, poly)
-        ConOut = ConIn;
-        mults  = {};
-        if isempty(domain_set)
-            ConOut = [ConOut, sos(poly)];
-            return
-        end
-        d_poly = degree(poly, xi);
-        s = 0;
-        for ii = 1:numel(domain_set)
-            d_g = degree(domain_set{ii}, xi);
-            d_mu = max(0, d_poly - d_g);             % balance degrees so mu*g can cancel leading terms
-            [mu_ii, ~] = polynomial(xi, d_mu);
-            ConOut = [ConOut, sos(mu_ii)];
-            s = s + mu_ii * domain_set{ii};
-            mults{end+1} = mu_ii;
-        end
-        ConOut = [ConOut, sos(poly - s)];
-    end
-
-%% SISBMI (full alternating SOS) or convex init
+% Stability
 if restrict_to_convex == 1
-    % SIS tuning
-    sis_maxit = 20;
-    sis_tol   = 1e-3;
-    if isfield(options, 'unmatched')
-        if isfield(options.unmatched, 'sis_max_iterations'), sis_maxit = options.unmatched.sis_max_iterations; end
-        if isfield(options.unmatched, 'sis_tolerance'),     sis_tol   = options.unmatched.sis_tolerance;     end
+    Constraints = [Constraints, (sos(V-epxi)):'V > 0'];
+end
+Vdot = sum(dVdx.*f, 1);
+% Lie derivative
+Constraints = [Constraints, (sos(-Vdot-epxi)):'-Vdot < 0'];
+
+% Barrier
+if options.enable_barrier
+    deg_B_slack = options.deg_B_slack;
+
+    % initial set
+    tau_arr = {};
+    tauc_arr = {};
+    tau_monomials_arr = {};
+    sos_safe = -B;
+    for p = 1:length(initial_set)
+        [tau_arr{p}, tauc_arr{p}, tau_monomials_arr{p}] = polynomial(xi, deg_B_slack);
+        Constraints = [Constraints, sos(tau_arr{p})];
+        sos_safe = sos_safe - tau_arr{p} * initial_set{p};
     end
-    if isfield(options, 'sdpoptions') && ~isempty(options.sdpoptions)
-        sdp_options = options.sdpoptions;
-    else
-        sdp_options = sdpsettings('solver','mosek','verbose',1,'cachesolvers',1);
+    Constraints = [Constraints, sos(sos_safe)];
+    debug_output.tau_arr = tau_arr;
+    debug_output.tauc_arr = tauc_arr;
+    debug_output.tau_monomials_arr = tau_monomials_arr;
+
+    % unsafe set
+    sig_arr = {};
+    sigc_arr = {};
+    sig_monomials_arr = {};
+    sos_unsafe = B - epsilon;
+    for m = 1:length(unsafe_set)
+        [sig_arr{m}, sigc_arr{m}, sig_monomials_arr{m}] = polynomial(xi, deg_B_slack);
+        Constraints = [Constraints, sos(sig_arr{m})];
+        sos_unsafe = sos_unsafe - sig_arr{m} * unsafe_set{m};
     end
+    Constraints = [Constraints, sos(sos_unsafe)];
+    debug_output.sig_arr = sig_arr;
+    debug_output.sigc_arr = sigc_arr;
+    debug_output.sig_monomials_arr = sig_monomials_arr;
 
-    % Warm start f
-    fc_k = value(fc_var);
-    if isempty(fc_k) || all(fc_k == 0), fc_k = zeros(size(fc_var)); end
-    best_mse = inf;
-
-    debug_output.sis = struct('it',[],'mse',[],'infoV',{{}},'infof',{{}});
-
-    for it = 1:sis_maxit
-        % ===== (A) VB-step: fix f := f_k, solve V,B =====
-        f_fixed = replace(f, fc_var, fc_k);
-        Constraints_VB = [];
-
-        % Lyapunov positivity and decay (decay relaxed to domain with degree balance)
-        Constraints_VB = [Constraints_VB, sos(V - epxi)];
-        Vdot_fixed = sum(jacobian(V, xi)'.*f_fixed, 1);
-        [Constraints_VB, ~] = add_domain_sos_auto(Constraints_VB, -Vdot_fixed - epxi);
-
-        if options.enable_barrier
-            % Initial set: B <= 0 on {g >= 0}  ->  -B - sum tau*g is SOS
-            if ~isempty(initial_set)
-                sos_safe = -B;
-                for p = 1:length(initial_set)
-                    [tau_p, ~] = polynomial(xi, deg_B_slack);
-                    Constraints_VB = [Constraints_VB, sos(tau_p)];
-                    sos_safe = sos_safe - tau_p * initial_set{p};
-                end
-                Constraints_VB = [Constraints_VB, sos(sos_safe)];
-            end
-
-            % Unsafe set: B >= epsilon on {h >= 0} ->  B - epsilon - sum sigma*h is SOS
-            if ~isempty(unsafe_set)
-                sos_unsafe = B - epsilon;
-                for q = 1:length(unsafe_set)
-                    [sig_q, ~] = polynomial(xi, deg_B_slack);
-                    Constraints_VB = [Constraints_VB, sos(sig_q)];
-                    sos_unsafe = sos_unsafe - sig_q * unsafe_set{q};
-                end
-                Constraints_VB = [Constraints_VB, sos(sos_unsafe)];
-            end
-
-            % Barrier derivative (relaxed to domain with degree balance)
-            Bdot_fixed = sum(jacobian(B, xi)'.*f_fixed, 1);
-            switch options.constraint_version
-                case 1
-                    [Constraints_VB, ~] = add_domain_sos_auto(Constraints_VB, -Bdot_fixed - epxi);
-                case 2
-                    [slackvar, ~] = polynomial(xi, deg_B_slack);
-                    Constraints_VB = [Constraints_VB, sos(slackvar)];
-                    [Constraints_VB, ~] = add_domain_sos_auto(Constraints_VB, -Bdot_fixed - epxi - slackvar*(epsilon - B));
-                case 3
-                    [slackvar, ~] = polynomial(xi, deg_B_slack);
-                    Constraints_VB = [Constraints_VB, sos(slackvar)];
-                    [Constraints_VB, ~] = add_domain_sos_auto(Constraints_VB, -Bdot_fixed - epxi - slackvar*(epsilon - B.^2));
-                otherwise
-                    [Constraints_VB, ~] = add_domain_sos_auto(Constraints_VB, -Bdot_fixed - epxi);
-            end
-        end
-
-        [sol_VB, ~, Q_VB] = solvesos(Constraints_VB, 0, sdp_options, [Vc_var(:); Bc_var(:)]);
-        debug_output.sis.it(end+1)    = it;
-        debug_output.sis.infoV{end+1} = sol_VB;
-
-        % Freeze V,B
-        if isa(Vc_var,'sdpvar') && ~isempty(Vc_var)
-            Vk = replace(V, Vc_var, value(Vc_var));
-        else
-            Vk = V; % fixed V
-        end
-        Bk    = replace(B, Bc_var, value(Bc_var));
-        dVdxk = jacobian(Vk, xi)';
-        dBdxk = jacobian(Bk, xi)';
-
-        % ===== (B) f-step: fix V:=Vk, B:=Bk, solve f =====
-        Constraints_f = [];
-
-        Vdot_k = sum(dVdxk.*f, 1);
-        [Constraints_f, ~] = add_domain_sos_auto(Constraints_f, -Vdot_k - epxi);
-
-        if options.enable_barrier
-            Bdot_k = sum(dBdxk.*f, 1);
-            switch options.constraint_version
-                case 1
-                    [Constraints_f, ~] = add_domain_sos_auto(Constraints_f, -Bdot_k - epxi);
-                case 2
-                    [slackvar_f, ~] = polynomial(xi, deg_B_slack);
-                    Constraints_f = [Constraints_f, sos(slackvar_f)];
-                    [Constraints_f, ~] = add_domain_sos_auto(Constraints_f, -Bdot_k - epxi - slackvar_f*(epsilon - Bk));
-                case 3
-                    [slackvar_f, ~] = polynomial(xi, deg_B_slack);
-                    Constraints_f = [Constraints_f, sos(slackvar_f)];
-                    [Constraints_f, ~] = add_domain_sos_auto(Constraints_f, -Bdot_k - epxi - slackvar_f*(epsilon - Bk.^2));
-                otherwise
-                    [Constraints_f, ~] = add_domain_sos_auto(Constraints_f, -Bdot_k - epxi);
-            end
-        end
-
-        Objective_f = Objective_fit;
-        if options.enable_regularization
-            Objective_f = Objective_f + options.regularization_factor * norm(fc_var(:), 2)^2;
-        end
-
-        [sol_f, ~, Q_f] = solvesos(Constraints_f, Objective_f, sdp_options, fc_var(:));
-        mse_k = value(mse);
-        debug_output.sis.mse(end+1) = mse_k;
-
-        if abs(best_mse - mse_k) < sis_tol
-            break;
-        end
-        best_mse = mse_k;
-        fc_k = value(fc_var);
+    % Lie derivative
+    Bdot = sum(dBdx.*f, 1);
+    switch options.constraint_version
+        case 1
+            Constraints = [Constraints, sos(-Bdot-epxi)];
+        case 2
+            [slackvar, slackvarc, slackvar_monomials] = polynomial(xi, deg_B_slack);
+            Constraints = [Constraints, sos(slackvar)];
+            Constraints = [Constraints, sos(-Bdot-epxi-slackvar*(epsilon - B))];
+            debug_output.slackvar = slackvar;
+            debug_output.slackvarc = slackvarc;
+            debug_output.slackvar_monomials = slackvar_monomials;
+        case 3
+            [slackvar, slackvarc, slackvar_monomials] = polynomial(xi, deg_B_slack);
+            Constraints = [Constraints, sos(slackvar)];
+            Constraints = [Constraints, sos(-Bdot-epxi-slackvar*(epsilon - B.^2))]; % restrict to B^{-1}(0)
+            debug_output.slackvar = slackvar;
+            debug_output.slackvarc = slackvarc;
+            debug_output.slackvar_monomials = slackvar_monomials;
     end
 
-    debug_output.Q = {Q_VB};
-else
-    % ===== Convex init (fixed V = xi'xi) =====
-    if isfield(options,'sdpoptions') && ~isempty(options.sdpoptions)
-        sdp_options = options.sdpoptions;
-    else
-        sdp_options = sdpsettings('solver','mosek','verbose',1,'cachesolvers',1);
-    end
-
-    Constraints = [];
-    Constraints = [Constraints, sos(V - epxi)];
-    Vdot = sum(dVdx.*f, 1);
-    [Constraints, ~] = add_domain_sos_auto(Constraints, -Vdot - epxi);
-
-    if options.enable_barrier
-        if ~isempty(initial_set)
-            sos_safe = -B;
-            for p = 1:length(initial_set)
-                [tau_p, ~] = polynomial(xi, deg_B_slack);
-                Constraints = [Constraints, sos(tau_p)];
-                sos_safe = sos_safe - tau_p * initial_set{p};
-            end
-            Constraints = [Constraints, sos(sos_safe)];
+    if options.enable_extra_constraint
+        B_tmp3 = 0;
+        for t = 1:T
+            B_tmp3 = B_tmp3 + max([0, replace(B, xi, rd.Data(1:M, t))]);
         end
-
-        if ~isempty(unsafe_set)
-            sos_unsafe = B - epsilon;
-            for q = 1:length(unsafe_set)
-                [sig_q, ~] = polynomial(xi, deg_B_slack);
-                Constraints = [Constraints, sos(sig_q)];
-                sos_unsafe = sos_unsafe - sig_q * unsafe_set{q};
-            end
-            Constraints = [Constraints, sos(sos_unsafe)];
-        end
-
-        Bdot = sum(dBdx.*f, 1);
-        switch options.constraint_version
-            case 1
-                [Constraints, ~] = add_domain_sos_auto(Constraints, -Bdot - epxi);
-            case 2
-                [slackvar, ~] = polynomial(xi, deg_B_slack);
-                Constraints = [Constraints, sos(slackvar)];
-                [Constraints, ~] = add_domain_sos_auto(Constraints, -Bdot - epxi - slackvar*(epsilon - B));
-            case 3
-                [slackvar, ~] = polynomial(xi, deg_B_slack);
-                Constraints = [Constraints, sos(slackvar)];
-                [Constraints, ~] = add_domain_sos_auto(Constraints, -Bdot - epxi - slackvar*(epsilon - B.^2));
-            otherwise
-                [Constraints, ~] = add_domain_sos_auto(Constraints, -Bdot - epxi);
-        end
+        Constraints = [Constraints, B_tmp3 <= 0]; % TODO: maybe use -epsilon on right side
     end
-
-    Objective = Objective_fit;
-    if options.enable_regularization
-        Objective = Objective + options.regularization_factor * norm(fc_var(:), 2)^2;
-    end
-
-    [sol, ~, Q] = solvesos(Constraints, Objective, sdp_options, fc_var(:));
-    debug_output.convex_init = sol;
 end
 
-%% Outputs: function handles and coefficient values
-fc = value(fc_var);
-f_num = replace(f, fc_var, fc);
-
-% V may be fixed (no decision variables) in convex-init
-Vc = [];
-if exist('Vc_var','var') && isa(Vc_var,'sdpvar') && ~isempty(Vc_var)
-    Vc    = value(Vc_var);
-    V_num = replace(V, Vc_var, Vc);
-else
-    V_num = V;  % fixed V = xi'*xi
+%% Optimize
+params = [];
+params = [params; fc_var(:)];
+if restrict_to_convex == 1
+    params = [params; Vc_var(:)];
+end
+if options.enable_barrier
+    params = [params; Bc_var];
+    for p = 1:length(initial_set)
+        params = [params; tauc_arr{p}];
+    end
+    for m = 1:length(unsafe_set)
+        params = [params; sigc_arr{m}];
+    end
+    if options.constraint_version == 2 || options.constraint_version == 3
+        params = [params; slackvarc];
+    end
 end
 
-% Barrier is always parametric here
-Bc    = value(Bc_var);
-B_num = replace(B, Bc_var, Bc);
 
-dVdx_num = jacobian(V_num, xi)';
-dBdx_num = jacobian(B_num, xi)';
+if options.enable_regularization
+    Objective = Objective + options.regularization_factor * norm(fc_var(:), 'fro')^2;
+end
 
-% Function handles (relies on sdpvar2fun existing in repo)
-f_fhm = cell(M,1);
+
+% Solver options
+if restrict_to_convex == 0
+    % convex SOS/SDP stage
+    sdp_options = sdpsettings('verbose',1,'solver','mosek');
+else
+    % full BMI stage
+    sdp_options = sdpsettings('verbose',1,'solver','bmibnb', ...
+                              'usex0',1,'warmstart',1);
+    if isfield(options,'sdpoptions_bmibnb')
+        bm = namedargs2cell(options.sdpoptions_bmibnb);
+        sdp_options = sdpsettings(sdp_options, bm{:});
+    end
+end
+
+
+% Call solver
+if sum(logical(is(Constraints, 'sos'))) > 0
+    [sol, v, Q, res] = solvesos(Constraints, Objective, sdp_options, params);
+else
+    sol = optimize(Constraints, Objective, sdp_options);
+    v = [];
+    Q = [];
+    res = [];
+end
+debug_output.v = v;
+debug_output.Q = Q;
+debug_output.res = res;
+
+if sol.problem ~= 0
+    yalmiperror(sol.problem);
+end
+
+
+% Optimization result
+sol.info
+check(Constraints)
+fprintf('Total error: %2.2f\nComputation Time: %2.2f\n', value(Objective), sol.solvertime);
+debug_output.sol = sol;
+
+
+% Output variables
+f_fh = replace(f, fc_var, value(fc_var));
+f_fhm = {};
+f_fh_str = '@(xi) [';
 for m = 1:M
-    f_fhm{m} = sdpvar2fun(f_num(m), xi);
+    f_fhm{m} = sdpvar2fun(f_fh(m), xi);
+    f_fh_str = strcat(f_fh_str, 'f_fhm{', num2str(m), '}(xi);');
 end
-f_fh    = @(x) cell2mat(cellfun(@(g) g(x), f_fhm, 'UniformOutput', false));
-V_fh    = sdpvar2fun(V_num, xi);
-dVdx_fh = @(x) double(replace(dVdx_num, xi, x));
-B_fh    = sdpvar2fun(B_num, xi);
-dBdx_fh = @(x) double(replace(dBdx_num, xi, x));
+f_fh_str = strcat(f_fh_str, ']');
+f_fh = eval(f_fh_str);
+
+if restrict_to_convex == 1
+    V_fh = replace(V, Vc_var, value(Vc_var));
+    V_fh = sdpvar2fun(V_fh, xi);
+
+    dVdx_fh = replace(dVdx, Vc_var, value(Vc_var));
+    dVdx_fhm = {};
+    dVdx_fh_str = '@(xi) [';
+    for m = 1:M
+        dVdx_fhm{m} = sdpvar2fun(dVdx_fh(m), xi);
+        dVdx_fh_str = strcat(dVdx_fh_str, 'dVdx_fhm{', num2str(m), '}(xi);');
+    end
+    dVdx_fh_str = strcat(dVdx_fh_str, ']');
+    dVdx_fh = eval(dVdx_fh_str);
+else % TODO: unify with above case
+    V_fh = sdpvar2fun(V, xi);
+
+    dVdx_fhm = {};
+    dVdx_fh_str = '@(xi) [';
+    for m = 1:M
+        dVdx_fhm{m} = sdpvar2fun(dVdx(m), xi);
+        dVdx_fh_str = strcat(dVdx_fh_str, 'dVdx_fhm{', num2str(m), '}(xi);');
+    end
+    dVdx_fh_str = strcat(dVdx_fh_str, ']');
+    dVdx_fh = eval(dVdx_fh_str);
+end
+
+B_fh = replace(B, Bc_var, value(Bc_var));
+B_fh = sdpvar2fun(B_fh, xi);
+
+dBdx_fh = replace(dBdx, Bc_var, value(Bc_var));
+dBdx_fhm = {};
+dBdx_fh_str = '@(xi) [';
+for m = 1:M
+    dBdx_fhm{m} = sdpvar2fun(dBdx_fh(m), xi);
+    dBdx_fh_str = strcat(dBdx_fh_str, 'dBdx_fhm{', num2str(m), '}(xi);');
+end
+dBdx_fh_str = strcat(dBdx_fh_str, ']');
+dBdx_fh = eval(dBdx_fh_str);
+
+fc = value(fc_var);
+Vc = value(Vc_var);
+Bc = value(Bc_var);
+
+
+[f_fh_str, ~] = mvfun2str(f_fh);
+fprintf(f_fh_str);
+fprintf(mvfun2str(V_fh));
+fprintf(mvfun2str(dVdx_fh));
+fprintf(mvfun2str(B_fh));
+fprintf(mvfun2str(dBdx_fh));
+
+debug_output.mse = value(mse);
+
+
+% For SOS constraints: eigenvalues of Gramians -> compare with size of residual
+fprintf('[DEBUG] Validation of SOS constraints:\n');
+fprintf('+++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n');
+fprintf('| Idx| Min eigval of Q| Primal residual|  Relative fact.|\n');
+fprintf('+++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n');
+min_q_eigvals = [];
+primal_res = check(Constraints(logical(is(Constraints, 'sos'))));
+relative_factors = [];
+for i = 1:length(Q)
+    min_eigval = min(eig(Q{i}));
+    min_q_eigvals(end+1) = min_eigval;
+    rel_fact = primal_res(i) / min_eigval;
+    relative_factors(end+1) = rel_fact;
+    fprintf('|%4.0f|%16g|%16g|%16g|  All eigvals of Q: %s\n', i, min_eigval, primal_res(i), rel_fact, mat2str(eig(Q{i})));
+end
+debug_output.min_q_eigvals = min_q_eigvals;
+debug_output.primal_residuals = primal_res';
+debug_output.relative_factors = relative_factors;
+fprintf('+++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n');
+fprintf('[DEBUG_END]\n');
+
 end
