@@ -7,6 +7,7 @@
 %
 %
 % Copyright © 2023 Martin Schonger
+% Copyright © 2025 Simone Silenzi
 % This software is licensed under the GPLv3.
 
 
@@ -34,14 +35,16 @@ experiments{end+1}.options = fvbsettings('enable_barrier', true, ...
     'enable_regularization', false, ...
     'deg_f', 5, 'deg_V', 2, 'deg_B', 4, 'deg_B_slack', 2, ...
     'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed, ...
-    'sdpoptions_penbmi', struct('PBM_MAX_ITER', 100, 'PEN_UP', 0.0, 'UM_MAX_ITER', 250, 'PRECISION_2', 1e-9), ...
+    'sdpoptions', sdpsettings('solver','mosek','verbose',1,'cachesolvers',1), ...
     'yz', false);
 experiments{end}.pre = {};
 
+experiments{end}.options.unmatched.sis_max_iterations = 15;
+experiments{end}.options.unmatched.sis_tolerance = 1e-3;
 experiments{end}.pre{end+1} = experiments{end}.options;
 experiments{end}.pre{end}.unmatched.restrict_to_convex = 0;
 experiments{end}.pre{end}.deg_f = 1;
-experiments{end}.pre{end}.enable_barrier = false;
+experiments{end}.pre{end}.enable_barrier = true;
 experiments{end}.pre{end}.unmatched.keep_fc = -1;
 %%% [END] Robot: two_obstacle
 
@@ -53,7 +56,7 @@ experiments{end}.pre{end}.unmatched.keep_fc = -1;
 %     'enable_regularization', false, ...
 %     'deg_f', 5, 'deg_V', 2, 'deg_B', 4, 'deg_B_slack', 2, ...
 %     'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed, ...
-%     'sdpoptions_penbmi', struct('PBM_MAX_ITER', 600, 'PEN_UP', 0.0, 'UM_MAX_ITER', 250, 'PRECISION_2', 1e-9), ...
+%     'sdpoptions', sdpsettings('solver','mosek','verbose',1,'cachesolvers',1), ...
 %     'yz', true);
 % experiments{end}.pre = {};
 %%% [END] Robot: box
@@ -72,16 +75,16 @@ experiments{end}.pre{end}.unmatched.keep_fc = -1;
 % lasa_ids = [1, 3, 5, 11, 14, 15, 19, 22, 24];
 % for i = 1:length(lasa_ids)
 %     lid = lasa_ids(i);
-% 
+%
 %     experiments{end+1}.options = fvbsettings('enable_barrier', false, ...
 %         'epsilon', 1e-3, 'init_Bc_var', false, 'constraint_version', 3, ...
 %         'dataset', 'lasa', 'dataset_opts', struct('idx', lid, 'obstacle_repr', "ellipse_axis"), ...
 %         'enable_regularization', false, ...
 %         'deg_f', 6, 'deg_V', 4, 'deg_B', 2, 'deg_B_slack', 2, ...
 %         'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed, ...
-%         'sdpoptions_penbmi', struct('PBM_MAX_ITER', 256, 'PRECISION', 1e-5));
+%         'sdpoptions', sdpsettings('solver','mosek','verbose',1,'cachesolvers',1));
 %     experiments{end}.pre = {};
-% 
+%
 %     experiments{end}.pre{end+1} = experiments{end}.options;
 %     experiments{end}.pre{end}.unmatched.restrict_to_convex = 0;
 %     experiments{end}.pre{end}.deg_f = 1;
@@ -98,7 +101,7 @@ experiments{end}.pre{end}.unmatched.keep_fc = -1;
 %     'enable_regularization', false, ...
 %     'deg_f', 5, 'deg_V', 4, 'deg_B', 4, 'deg_B_slack', 2, ...
 %     'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed, ...
-%     'sdpoptions_penbmi', struct('PBM_MAX_ITER', 50, 'PEN_UP', 0.0, 'UM_MAX_ITER', 250));
+%     'sdpoptions', sdpsettings('solver','mosek','verbose',1,'cachesolvers',1));
 % experiments{end}.pre = {};
 %%% [END] LASA 11: Leaf2
 
@@ -110,9 +113,9 @@ experiments{end}.pre{end}.unmatched.keep_fc = -1;
 %     'enable_regularization', false, ...
 %     'deg_f', 4, 'deg_V', 2, 'deg_B', 3, 'deg_B_slack', 2, ...
 %     'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed, ...
-%     'sdpoptions_penbmi', struct('PBM_MAX_ITER', 50, 'PEN_UP', 0.0, 'UM_MAX_ITER', 250));
+%     'sdpoptions', sdpsettings('solver','mosek','verbose',1,'cachesolvers',1));
 % experiments{end}.pre = {};
-% 
+%
 % experiments{end}.pre{end+1} = experiments{end}.options;
 % experiments{end}.pre{end}.unmatched.restrict_to_convex = 0;
 % experiments{end}.pre{end}.deg_f = 1;
@@ -128,9 +131,9 @@ experiments{end}.pre{end}.unmatched.keep_fc = -1;
 %     'enable_regularization', false, ...
 %     'deg_f', 5, 'deg_V', 2, 'deg_B', 3, 'deg_B_slack', 2, ...
 %     'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed, ...
-%     'sdpoptions_penbmi', struct('PBM_MAX_ITER', 100, 'PEN_UP', 0.0, 'UM_MAX_ITER', 250));
+%     'sdpoptions', sdpsettings('solver','mosek','verbose',1,'cachesolvers',1));
 % experiments{end}.pre = {};
-% 
+%
 % experiments{end}.pre{end+1} = experiments{end}.options;
 % experiments{end}.pre{end}.unmatched.restrict_to_convex = 0;
 % experiments{end}.pre{end}.deg_f = 1;
@@ -146,18 +149,18 @@ experiments{end}.pre{end}.unmatched.keep_fc = -1;
 %     'enable_regularization', false, ...
 %     'deg_f', 4, 'deg_V', 2, 'deg_B', 3, 'deg_B_slack', 2, ...
 %     'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed, ...
-%     'sdpoptions_penbmi', struct('PBM_MAX_ITER', 50, 'PEN_UP', 0.0));
+%     'sdpoptions', sdpsettings('solver','mosek','verbose',1,'cachesolvers',1));
 % experiments{end}.pre = {};
-% 
+%
 % experiments{end}.pre{end+1} = experiments{end}.options;
 % experiments{end}.pre{end}.unmatched.restrict_to_convex = 0;
 % experiments{end}.pre{end}.deg_f = 1;
 % experiments{end}.pre{end}.enable_barrier = false;
 % experiments{end}.pre{end}.unmatched.keep_fc = -1;
-% 
+%
 % experiments{end}.pre{end+1} = experiments{end}.options;
 % experiments{end}.pre{end}.enable_barrier = false;
-% experiments{end}.pre{end}.sdpoptions_penbmi.PBM_MAX_ITER = 50;
+% experiments{end}.pre{end}.sdpoptions = sdpsettings('solver','mosek','verbose',1,'cachesolvers',1);
 % experiments{end}.pre{end}.unmatched.keep_fc = -1;
 % experiments{end}.pre{end}.unmatched.keep_Vc = -1;
 %%% [END] LASA 24: Worm
@@ -170,7 +173,7 @@ experiments{end}.pre{end}.unmatched.keep_fc = -1;
 %     'enable_regularization', false, ...
 %     'deg_f', 5, 'deg_V', 2, 'deg_B', 4, 'deg_B_slack', 2, ...
 %     'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed, ...
-%     'sdpoptions_penbmi', struct('PBM_MAX_ITER', 100, 'PEN_UP', 0.0, 'UM_MAX_ITER', 250));
+%     'sdpoptions', sdpsettings('solver','mosek','verbose',1,'cachesolvers',1));
 % experiments{end}.pre = {};
 %%% [END] LASA 19: Sine
 
