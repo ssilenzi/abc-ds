@@ -1,4 +1,5 @@
 % Copyright © 2023 Martin Schonger
+% Copyright © 2025 Simone Silenzi
 % This software is licensed under the GPLv3.
 
 
