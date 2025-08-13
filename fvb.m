@@ -226,18 +226,38 @@ if options.enable_regularization
 end
 
 
+tmp_sdpoptions = options.sdpoptions;
+tmp_sdpoptions = namedargs2cell(tmp_sdpoptions);
+
+final_sdpoptions = tmp_sdpoptions;
+
+
 % Solver options
 if restrict_to_convex == 0
-    % convex SOS/SDP stage
-    sdp_options = sdpsettings('verbose',1,'solver','mosek');
-else
-    % full BMI stage
-    sdp_options = sdpsettings('verbose',1,'solver','bmibnb', ...
-                              'usex0',1,'warmstart',1);
-    if isfield(options,'sdpoptions_bmibnb')
-        bm = namedargs2cell(options.sdpoptions_bmibnb);
-        sdp_options = sdpsettings(sdp_options, bm{:});
-    end
+    sdp_options = sdpsettings('verbose', 1);
+elseif restrict_to_convex == 1
+    sdp_options = sdpsettings('solver', 'penlab', 'verbose', 1, 'debug', 1, 'showprogress', 1, 'usex0', 1, 'warmstart', 1);
+    %                                                                           Default     More Info
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.PBM_MAX_ITER', 10000);     % 50        maximum number of iterations of the overall algorithm
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.OUTPUT', 3);                 % 1
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.ALPHA', 1e-6);             % 0.01      stopping criterium for unconstrained minimization; YALMIP lower bounds it by 1e-6
+    
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.UM_MAX_ITER', 1000);       % 100       maximum number of iterations for the unconstrained minimization
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.LS', 1);                   % 0
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.NWT_SYS_MODE', 1);         % 0
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.PREC_TYPE', 1);            % 0
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.TR_MODE', 1);              % 0
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.PRECISION', 1e-6);         % 1e-6      stopping criterium for the overall algorithm (likely corresponds to PBM_EPS in PENBMI doc)
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.P_EPS', 1e-6);             % 1e-4
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.P0', 0.01);                % 0.1
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.PEN_UP', 0.0);             % 0.5
+    % if options.enable_barrier
+    %     warning('Check if it makes sense to lower the initial penalty when including a Barrier function -> is the initial guess feasible?');
+    % end
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.ALPHA_UP', 1.0);           % 1.0
+    % sdp_options = sdpsettings(sdp_options, 'penbmi.PRECISION_2', 1e-2);       % 1e-6      precision of the KKT conditions
+
+    sdp_options = sdpsettings(sdp_options, final_sdpoptions{:});
 end
 
 

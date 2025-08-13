@@ -22,7 +22,6 @@ addParameter(p, 'regularization_factor', 0.01);
 addParameter(p, 'dataset', 'lasa');  % can also be set to 'robot'
 addParameter(p, 'dataset_opts', struct('idx', 14));  % see `main2.m` for other possible options
 addParameter(p, 'sdpoptions', struct);  % passed to YALMIP
-addParameter(p, 'sdpoptions_bmibnb', struct);  % passed to PENBMI
 parse(p, varargin{:});
 
 options = p.Results;

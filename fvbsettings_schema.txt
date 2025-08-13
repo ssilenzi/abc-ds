@@ -13,4 +13,3 @@ regularization_factor
 dataset
 dataset_opts
 sdpoptions
-sdpoptions_penbmi
