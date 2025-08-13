@@ -14,23 +14,14 @@ and Sami Haddadin<sup>1</sup>, published in the proceedings of the 2024 Internat
 <sup>3</sup>Learning Algorithms and Systems Laboratory, EPFL, Switzerland.\
 <sup>*</sup>These authors contributed equally to the paper.
 
+Modified by Simone Silenzi to avoid PENBMI.
 
 ### Setup
 Install MATLAB (tested with R2023a).
 
-Install the required MathWorks toolboxes:
-Control System Toolbox,
-Robust Control Toolbox,
-Optimization Toolbox,
-Signal Processing Toolbox,
-Symbolic Math Toolbox,
-Statistics and Machine Learning Toolbox.
-
 Install the required third party tools:
 [YALMIP](https://yalmip.github.io/),
-[PENLAB](https://web.mat.bham.ac.uk/kocvara/penlab/)+[PENBMI](http://www.penopt.com/penbmi.html),
-[MOSEK](https://www.mosek.com/),
-[GUROBI](https://www.gurobi.com/),
+[PENLAB](https://web.mat.bham.ac.uk/kocvara/penlab/),
 (Optional for plotting: [crameri colormaps](https://de.mathworks.com/matlabcentral/fileexchange/68546-crameri-perceptually-uniform-scientific-colormaps)).
 
 > **Note**
@@ -38,7 +29,7 @@ Install the required third party tools:
 
 Run:
 ```bash
-git clone https://github.com/martinschonger/abc-ds.git
+git clone https://github.com/ssilenzi/abc-ds.git
 cd abc-ds
 git submodule init
 git submodule update
@@ -61,5 +52,6 @@ martin.schonger@tum.de
 This software was created as part of Martin Schonger's master's thesis in Computer Science at the Technical University of Munich's (TUM) School of Computation, Information and Technology (CIT).
 
 
-Copyright © 2023 Martin Schonger  
+Copyright © 2023 Martin Schonger
+Copyright © 2025 Simone Silenzi
 This software is licensed under the GPLv3.

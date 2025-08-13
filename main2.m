@@ -68,24 +68,24 @@ experiments = {};
 %%% Sine: 19
 %%% S: 22
 %%% Worm: 24
-% lasa_ids = [1, 3, 5, 11, 14, 15, 19, 22, 24];
-% for i = 1:length(lasa_ids)
-%     lid = lasa_ids(i);
-% 
-%     experiments{end+1}.options = fvbsettings('enable_barrier', false, ...
-%         'epsilon', 1e-3, 'init_Bc_var', false, 'constraint_version', 3, ...
-%         'dataset', 'lasa', 'dataset_opts', struct('idx', lid, 'obstacle_repr', "ellipse_axis"), ...
-%         'enable_regularization', false, ...
-%         'deg_f', 6, 'deg_V', 4, 'deg_B', 2, 'deg_B_slack', 2, ...
-%         'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed);
-%     experiments{end}.pre = {};
-% 
-%     experiments{end}.pre{end+1} = experiments{end}.options;
-%     experiments{end}.pre{end}.unmatched.restrict_to_convex = 0;
-%     experiments{end}.pre{end}.deg_f = 1;
-%     experiments{end}.pre{end}.enable_barrier = false;
-%     experiments{end}.pre{end}.unmatched.keep_fc = -1;
-% end
+lasa_ids = [1, 3, 5, 11, 14, 15, 19, 22, 24];
+for i = 1:length(lasa_ids)
+    lid = lasa_ids(i);
+
+    experiments{end+1}.options = fvbsettings('enable_barrier', false, ...
+        'epsilon', 1e-3, 'init_Bc_var', false, 'constraint_version', 3, ...
+        'dataset', 'lasa', 'dataset_opts', struct('idx', lid, 'obstacle_repr', "ellipse_axis"), ...
+        'enable_regularization', false, ...
+        'deg_f', 6, 'deg_V', 4, 'deg_B', 2, 'deg_B_slack', 2, ...
+        'enable_extra_constraint', true, 'regularization_factor', 0.01, 'seed', local_seed);
+    experiments{end}.pre = {};
+
+    experiments{end}.pre{end+1} = experiments{end}.options;
+    experiments{end}.pre{end}.unmatched.restrict_to_convex = 0;
+    experiments{end}.pre{end}.deg_f = 1;
+    experiments{end}.pre{end}.enable_barrier = false;
+    experiments{end}.pre{end}.unmatched.keep_fc = -1;
+end
 %%% [END] LASA multi: [1, 3, 5, 11, 14, 15, 19, 22, 24]
 
 
